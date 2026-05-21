@@ -7,46 +7,26 @@ import android.app.PendingIntent
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
-import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
 import androidx.core.app.NotificationCompat
 import com.parental.focus.ParentalFocusApp
 import com.parental.focus.R
 import com.parental.focus.data.AppPreferences
 import com.parental.focus.overlay.BlockOverlayActivity
-import com.parental.focus.ui.MainActivity
 
 /**
  * AppBlockerAccessibilityService
  *
- * The core enforcement engine of Parental Focus.
+ * Core enforcement engine. Listens for TYPE_WINDOW_STATE_CHANGED events,
+ * checks whether the foreground package is in the blocked list during an
+ * active schedule, and fires GLOBAL_ACTION_HOME to redirect the user.
  *
- * ── How blocking works ──────────────────────────────────────────────────────
- *
- *  1. Android fires TYPE_WINDOW_STATE_CHANGED every time a new activity/window
- *     appears in the foreground.
- *  2. We read the package name from the event.
- *  3. We check:
- *       a. Master blocking switch is ON.
- *       b. There is at least one active schedule whose time window includes now.
- *       c. The package is in the blocked list (global or schedule-specific).
- *       d. Parent override is NOT active (parent verified themselves recently).
- *  4. If all conditions are true:
- *       • We call performGlobalAction(GLOBAL_ACTION_HOME) — sends the user to
- *         the home screen instantly.
- *       • We launch BlockOverlayActivity over the home screen as a reminder,
- *         with the option to perform a parent face-unlock.
- *       • We schedule a retry check 400 ms later (some aggressive apps try to
- *         relaunch themselves).
- *
- * ── Never-block list ────────────────────────────────────────────────────────
- *  System apps that must always be accessible to prevent the user being locked
- *  out of their device:
- *    • Our own package
- *    • Android system UI
- *    • Device launcher (various)
- *    • Emergency dialer
- *    • Setup wizard
+ * Features:
+ *   • Never-block list — system UI, launcher, dialer, our own package
+ *   • Cooldown — same package can't be re-blocked within BLOCK_COOLDOWN_MS
+ *   • Retry — 4 re-checks at 400 ms intervals catch self-relaunching apps
+ *   • Screen dim — optionally lowers brightness on block (WRITE_SETTINGS)
+ *   • Parent override — suppressed while isParentVerified() returns true
  */
 class AppBlockerAccessibilityService : AccessibilityService() {
 
@@ -56,16 +36,16 @@ class AppBlockerAccessibilityService : AccessibilityService() {
     private var lastBlockedAt: Long = 0L
 
     companion object {
-        /** Packages that can NEVER be blocked regardless of settings. */
         private val NEVER_BLOCK = setOf(
             "com.parental.focus",
             "com.android.systemui",
             "com.android.launcher",
             "com.google.android.apps.nexuslauncher",
-            "com.sec.android.app.launcher",         // Samsung
-            "com.miui.home",                         // Xiaomi
-            "com.huawei.android.launcher",           // Huawei
-            "com.oppo.launcher",                     // Oppo/OnePlus
+            "com.sec.android.app.launcher",
+            "com.miui.home",
+            "com.huawei.android.launcher",
+            "com.oppo.launcher",
+            "com.oneplus.launcher",
             "com.android.emergency",
             "com.android.phone",
             "com.android.dialer",
@@ -77,10 +57,7 @@ class AppBlockerAccessibilityService : AccessibilityService() {
             "com.android.server.telecom"
         )
 
-        /** Cooldown in ms: don't re-block the same package twice within this window. */
         private const val BLOCK_COOLDOWN_MS = 1_500L
-
-        /** How many retries to schedule after an initial block. */
         private const val RETRY_COUNT = 4
         private const val RETRY_INTERVAL_MS = 400L
     }
@@ -93,7 +70,8 @@ class AppBlockerAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
         if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
-            event.eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) return
+            event.eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+        ) return
 
         val pkg = event.packageName?.toString() ?: return
         if (pkg.isBlank()) return
@@ -106,7 +84,6 @@ class AppBlockerAccessibilityService : AccessibilityService() {
         if (!prefs.isBlockingEnabled()) return
         if (prefs.isParentVerified()) return
 
-        // Check if any active schedule covers right now and includes this package
         val now = System.currentTimeMillis()
         val schedules = prefs.getSchedules()
         val globalBlocked = prefs.getBlockedPackages()
@@ -122,7 +99,6 @@ class AppBlockerAccessibilityService : AccessibilityService() {
 
         if (!shouldBlock) return
 
-        // Cooldown — avoid hammering the same package
         if (pkg == lastBlockedPkg && now - lastBlockedAt < BLOCK_COOLDOWN_MS) return
         lastBlockedPkg = pkg
         lastBlockedAt = now
@@ -131,14 +107,18 @@ class AppBlockerAccessibilityService : AccessibilityService() {
     }
 
     private fun enforceBlock(pkg: String) {
-        // 1. Fire global HOME action — returns user to launcher instantly
+        // 1. Send user home immediately
         performGlobalAction(GLOBAL_ACTION_HOME)
 
-        // 2. Post block alert notification with full-screen intent to
-        //    launch BlockOverlayActivity even on locked/sleeping devices
+        // 2. Dim screen if the setting is enabled
+        if (prefs.isDimOnBlockEnabled()) {
+            ScreenBrightnessManager.dim(applicationContext)
+        }
+
+        // 3. Show block overlay via full-screen notification
         postBlockNotification(pkg)
 
-        // 3. Retry checks to catch apps that relaunch themselves
+        // 4. Retry checks in case the app relaunches itself
         for (i in 1..RETRY_COUNT) {
             handler.postDelayed({ maybeBlock(pkg) }, RETRY_INTERVAL_MS * i)
         }
@@ -156,6 +136,7 @@ class AppBlockerAccessibilityService : AccessibilityService() {
             putExtra(BlockOverlayActivity.EXTRA_BLOCKED_PKG, blockedPkg)
             putExtra(BlockOverlayActivity.EXTRA_BLOCKED_NAME, appName)
         }
+
         val pi = PendingIntent.getActivity(
             this, 0, overlayIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -171,10 +152,11 @@ class AppBlockerAccessibilityService : AccessibilityService() {
             .setAutoCancel(true)
             .build()
 
-        val nm = getSystemService(NotificationManager::class.java)
-        nm?.notify(ParentalFocusApp.NOTIF_ID_BLOCK, notification)
+        getSystemService(NotificationManager::class.java)?.notify(
+            ParentalFocusApp.NOTIF_ID_BLOCK, notification
+        )
 
-        // Also start the activity directly (works when screen is on and unlocked)
+        // Also start directly (works when screen is on and unlocked)
         startActivity(overlayIntent)
     }
 
