@@ -8,13 +8,13 @@ import com.google.gson.reflect.TypeToken
 /**
  * Single source of truth for all persisted state.
  *
- * Keys:
- *   blocked_packages      – JSON array of package names the child cannot open
- *   schedules             – JSON array of BlockSchedule objects
- *   face_enrolled         – Boolean: face reference has been saved
- *   face_landmark_data    – JSON array of FaceLandmarkPoint (child's face reference)
- *   blocking_enabled      – Boolean: master on/off switch
- *   parent_verified_until – Long: epoch ms until parent override is valid
+ * Face storage (v2):
+ *   face_embedding_v2  – JSON array of 128 floats (FaceNet L2-normalised embedding)
+ *   face_enrolled      – Boolean guard
+ *
+ *   The old key `face_landmark_data` stored 8 ML Kit landmark points.  It is no
+ *   longer written; callers that read the new key will get an empty array if only
+ *   the old key is present, triggering a fresh enrollment.
  */
 class AppPreferences(context: Context) {
 
@@ -35,15 +35,11 @@ class AppPreferences(context: Context) {
     }
 
     fun addBlockedPackage(pkg: String) {
-        val current = getBlockedPackages().toMutableSet()
-        current.add(pkg)
-        setBlockedPackages(current)
+        setBlockedPackages(getBlockedPackages().toMutableSet().also { it.add(pkg) })
     }
 
     fun removeBlockedPackage(pkg: String) {
-        val current = getBlockedPackages().toMutableSet()
-        current.remove(pkg)
-        setBlockedPackages(current)
+        setBlockedPackages(getBlockedPackages().toMutableSet().also { it.remove(pkg) })
     }
 
     // ── Schedules ─────────────────────────────────────────────────────────────
@@ -60,8 +56,8 @@ class AppPreferences(context: Context) {
 
     fun addSchedule(schedule: BlockSchedule) {
         val current = getSchedules().toMutableList()
-        val existing = current.indexOfFirst { it.id == schedule.id }
-        if (existing >= 0) current[existing] = schedule else current.add(schedule)
+        val idx = current.indexOfFirst { it.id == schedule.id }
+        if (idx >= 0) current[idx] = schedule else current.add(schedule)
         saveSchedules(current)
     }
 
@@ -69,26 +65,37 @@ class AppPreferences(context: Context) {
         saveSchedules(getSchedules().filter { it.id != id })
     }
 
-    // ── Face enrollment ───────────────────────────────────────────────────────
+    // ── Face enrollment (v2 — FaceNet embedding) ──────────────────────────────
 
     fun isFaceEnrolled(): Boolean = prefs.getBoolean(KEY_FACE_ENROLLED, false)
 
-    fun saveFaceLandmarks(landmarks: List<FaceLandmarkPoint>) {
+    /**
+     * Persist the 128-dim FaceNet embedding as a JSON float array.
+     * Also clears any legacy landmark data left from v1.
+     */
+    fun saveFaceEmbedding(embedding: FloatArray) {
         prefs.edit()
-            .putString(KEY_FACE_LANDMARKS, gson.toJson(landmarks))
+            .putString(KEY_FACE_EMBEDDING, gson.toJson(embedding.toList()))
             .putBoolean(KEY_FACE_ENROLLED, true)
+            .remove(KEY_FACE_LANDMARKS_LEGACY)  // remove old format
             .apply()
     }
 
-    fun getFaceLandmarks(): List<FaceLandmarkPoint> {
-        val json = prefs.getString(KEY_FACE_LANDMARKS, "[]") ?: "[]"
-        val type = object : TypeToken<List<FaceLandmarkPoint>>() {}.type
-        return gson.fromJson(json, type) ?: emptyList()
+    /**
+     * Retrieve the stored 128-dim embedding, or an empty array if none exists
+     * (triggers re-enrollment in the UI).
+     */
+    fun getFaceEmbedding(): FloatArray {
+        val json = prefs.getString(KEY_FACE_EMBEDDING, null) ?: return FloatArray(0)
+        val type = object : TypeToken<List<Float>>() {}.type
+        val list: List<Float> = gson.fromJson(json, type) ?: return FloatArray(0)
+        return list.toFloatArray()
     }
 
     fun clearFaceEnrollment() {
         prefs.edit()
-            .remove(KEY_FACE_LANDMARKS)
+            .remove(KEY_FACE_EMBEDDING)
+            .remove(KEY_FACE_LANDMARKS_LEGACY)
             .putBoolean(KEY_FACE_ENROLLED, false)
             .apply()
     }
@@ -101,15 +108,14 @@ class AppPreferences(context: Context) {
         prefs.edit().putBoolean(KEY_BLOCKING_ENABLED, enabled).apply()
     }
 
-    // ── Parent override (temporary bypass after face verify) ─────────────────
+    // ── Parent override ───────────────────────────────────────────────────────
 
     fun setParentVerifiedUntil(epochMs: Long) {
         prefs.edit().putLong(KEY_PARENT_VERIFIED_UNTIL, epochMs).apply()
     }
 
-    fun isParentVerified(): Boolean {
-        return System.currentTimeMillis() < prefs.getLong(KEY_PARENT_VERIFIED_UNTIL, 0L)
-    }
+    fun isParentVerified(): Boolean =
+        System.currentTimeMillis() < prefs.getLong(KEY_PARENT_VERIFIED_UNTIL, 0L)
 
     fun clearParentOverride() {
         prefs.edit().putLong(KEY_PARENT_VERIFIED_UNTIL, 0L).apply()
@@ -130,13 +136,14 @@ class AppPreferences(context: Context) {
     companion object {
         private const val PREFS_FILE = "parental_focus_prefs"
 
-        const val KEY_BLOCKED_PKGS         = "blocked_packages"
-        const val KEY_SCHEDULES            = "schedules"
-        const val KEY_FACE_ENROLLED        = "face_enrolled"
-        const val KEY_FACE_LANDMARKS       = "face_landmark_data"
-        const val KEY_BLOCKING_ENABLED     = "blocking_enabled"
+        const val KEY_BLOCKED_PKGS          = "blocked_packages"
+        const val KEY_SCHEDULES             = "schedules"
+        const val KEY_FACE_ENROLLED         = "face_enrolled"
+        const val KEY_FACE_EMBEDDING        = "face_embedding_v2"   // 128-dim FloatArray JSON
+        const val KEY_FACE_LANDMARKS_LEGACY = "face_landmark_data"  // old v1 key — only removed
+        const val KEY_BLOCKING_ENABLED      = "blocking_enabled"
         const val KEY_PARENT_VERIFIED_UNTIL = "parent_verified_until"
-        const val KEY_DIM_ON_BLOCK         = "dim_on_block"
-        const val KEY_SETUP_COMPLETE       = "setup_complete"
+        const val KEY_DIM_ON_BLOCK          = "dim_on_block"
+        const val KEY_SETUP_COMPLETE        = "setup_complete"
     }
 }
