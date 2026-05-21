@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.AppOpsManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -14,6 +15,7 @@ import android.view.accessibility.AccessibilityManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -210,11 +212,18 @@ private fun PermissionsScreen(
                     }
                 )
 
+                val cameraOk by remember(tick) {
+                    derivedStateOf {
+                        ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+                            PackageManager.PERMISSION_GRANTED
+                    }
+                }
+
                 PermissionRow(
                     icon = Icons.Default.CameraAlt,
                     title = "Camera + Notifications",
                     description = "Face enrollment and blocking alerts.",
-                    granted = false, // re-check happens on return
+                    granted = cameraOk,
                     onGrant = onRequestRuntimePermissions
                 )
 
