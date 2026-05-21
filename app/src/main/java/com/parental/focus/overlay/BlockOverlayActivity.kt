@@ -20,6 +20,7 @@ import com.google.mlkit.vision.common.InputImage
 import com.parental.focus.R
 import com.parental.focus.data.AppPreferences
 import com.parental.focus.face.FaceUtils
+import com.parental.focus.service.ScreenBrightnessManager
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -354,6 +355,8 @@ class BlockOverlayActivity : Activity(), LifecycleOwner {
             true -> {
                 showVerifyStatus(getString(R.string.overlay_verified), success = true)
                 prefs.setParentVerifiedUntil(System.currentTimeMillis() + PARENT_OVERRIDE_DURATION_MS)
+                // Restore screen brightness before dismissing the overlay
+                ScreenBrightnessManager.restore(applicationContext)
                 handler.postDelayed({ finish() }, 1_200L)
             }
             false -> {
