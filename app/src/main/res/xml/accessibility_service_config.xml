@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    AppBlockerAccessibilityService configuration.
+
+    • accessibilityEventTypes: TYPE_WINDOW_STATE_CHANGED fires whenever a new
+      activity/fragment comes to the foreground — the primary trigger for app blocking.
+      TYPE_WINDOW_CONTENT_CHANGED is included so the service can also react to
+      in-app navigation changes (e.g. YouTube Shorts within the YouTube app).
+
+    • accessibilityFeedbackType: FEEDBACK_GENERIC — we don't read out any content,
+      we just observe events.
+
+    • notificationTimeout: 100 ms — the service should react quickly.
+
+    • canPerformGestures: true — required to press HOME/BACK programmatically via
+      performGlobalAction(GLOBAL_ACTION_HOME).
+
+    • canRetrieveWindowContent: true — needed to inspect the current window's
+      package name when TYPE_WINDOW_CONTENT_CHANGED fires.
+
+    • description: shown on the Accessibility settings page.
+-->
+<accessibility-service
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault|flagReportViewIds|flagRetrieveInteractiveWindows"
+    android:canPerformGestures="true"
+    android:canRetrieveWindowContent="true"
+    android:description="@string/accessibility_service_description"
+    android:notificationTimeout="100"
+    android:packageNames=""
+    android:settingsActivity=".ui.MainActivity" />
