@@ -12,8 +12,8 @@ android {
         applicationId = "com.parental.focus"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }
     }
@@ -46,6 +46,13 @@ android {
 
     packaging {
         resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" }
+        // Exclude conflicting TFLite native libraries from duplicate merging
+        jniLibs { pickFirsts += listOf("**/*.so") }
+    }
+
+    // Allow TFLite .tflite assets to be uncompressed for faster load
+    aaptOptions {
+        noCompress("tflite")
     }
 }
 
@@ -70,8 +77,20 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.3.3")
     implementation("androidx.camera:camera-view:1.3.3")
 
-    // ML Kit Face Detection (bundled – no Play Services needed)
+    // ML Kit Face Detection — used for bounding-box detection + face crop
+    // (bundled variant: no Play Services dependency)
     implementation("com.google.mlkit:face-detection:16.1.6")
+
+    // TFLite — runs the FaceNet embedding model for real face identity recognition
+    // Core interpreter
+    implementation("org.tensorflow:tensorflow-lite:2.14.0")
+    // Support library: image pre-processing, tensor buffers
+    implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
+    // GPU delegate (optional, falls back to CPU automatically)
+    implementation("org.tensorflow:tensorflow-lite-gpu:2.14.0")
+
+    // Google Play Services Tasks — Tasks.await() used in FaceUtils IO coroutine
+    implementation("com.google.android.gms:play-services-tasks:18.1.0")
 
     // Biometric
     implementation("androidx.biometric:biometric:1.2.0-alpha05")
@@ -79,10 +98,13 @@ dependencies {
     // Gson
     implementation("com.google.code.gson:gson:2.10.1")
 
-    // Material (for traditional views in overlays)
+    // Material (traditional views in overlay / enrollment activities)
     implementation("com.google.android.material:material:1.12.0")
 
-    // WorkManager for background scheduling
+    // Kotlin coroutines
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0")
+
+    // WorkManager
     implementation("androidx.work:work-runtime-ktx:2.9.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
