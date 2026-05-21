@@ -1,5 +1,7 @@
 package com.parental.focus.ui
 
+import android.app.DatePickerDialog
+import android.app.TimePickerDialog
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
@@ -31,6 +33,9 @@ import com.parental.focus.data.AppInfo
 import com.parental.focus.data.AppPreferences
 import com.parental.focus.data.BlockSchedule
 import com.parental.focus.service.BlockerForegroundService
+import com.parental.focus.service.ScheduleAlarmManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -41,21 +46,17 @@ class MainActivity : ComponentActivity() {
 
         val prefs = AppPreferences(applicationContext)
 
-        // First-launch: go to permissions setup
         if (!prefs.isSetupComplete()) {
             startActivity(Intent(this, PermissionsActivity::class.java))
             finish()
             return
         }
 
-        // Start foreground service
         val svc = Intent(this, BlockerForegroundService::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(svc)
         else startService(svc)
 
-        setContent {
-            ParentalFocusApp()
-        }
+        setContent { ParentalFocusApp() }
     }
 }
 
@@ -152,17 +153,25 @@ fun SchedulesScreen() {
                 Text("Tap + to add one.", color = Color(0xFFBDBDBD), fontSize = 14.sp)
             }
         } else {
-            LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            LazyColumn(
+                Modifier.fillMaxSize().padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
                 items(schedules, key = { it.id }) { schedule ->
                     ScheduleCard(
                         schedule = schedule,
                         onToggle = {
                             val updated = schedule.copy(enabled = !schedule.enabled)
                             prefs.addSchedule(updated)
+                            ScheduleAlarmManager.rescheduleAll(context, prefs.getSchedules())
                             schedules = prefs.getSchedules()
                         },
                         onEdit = { editingSchedule = schedule; showAddDialog = true },
-                        onDelete = { prefs.removeSchedule(schedule.id); schedules = prefs.getSchedules() }
+                        onDelete = {
+                            prefs.removeSchedule(schedule.id)
+                            ScheduleAlarmManager.rescheduleAll(context, prefs.getSchedules())
+                            schedules = prefs.getSchedules()
+                        }
                     )
                 }
                 item { Spacer(Modifier.height(72.dp)) }
@@ -184,6 +193,7 @@ fun SchedulesScreen() {
             onDismiss = { showAddDialog = false; editingSchedule = null },
             onSave = { schedule ->
                 prefs.addSchedule(schedule)
+                ScheduleAlarmManager.rescheduleAll(context, prefs.getSchedules())
                 schedules = prefs.getSchedules()
                 showAddDialog = false
                 editingSchedule = null
@@ -221,8 +231,8 @@ private fun ScheduleCard(
                         Text("From: ${fmt.format(Date(schedule.startEpochMs))}", fontSize = 13.sp, color = Color(0xFF616161))
                         Text("Until: ${fmt.format(Date(schedule.endEpochMs))}", fontSize = 13.sp, color = Color(0xFF616161))
                     } else {
-                        Text("Repeats: ${formatDays(schedule.repeatDays)}", fontSize = 13.sp, color = Color(0xFF616161))
                         val timeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
+                        Text("Repeats: ${formatDays(schedule.repeatDays)}", fontSize = 13.sp, color = Color(0xFF616161))
                         Text("${timeFmt.format(Date(schedule.startEpochMs))} – ${timeFmt.format(Date(schedule.endEpochMs))}", fontSize = 13.sp, color = Color(0xFF616161))
                     }
                 }
@@ -248,7 +258,7 @@ private fun formatDays(mask: Int): String {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Schedule Dialog (Add / Edit)
+// Schedule Dialog — real TimePickerDialog + DatePickerDialog
 // ─────────────────────────────────────────────────────────────────────────────
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -258,6 +268,8 @@ private fun ScheduleDialog(
     onDismiss: () -> Unit,
     onSave: (BlockSchedule) -> Unit
 ) {
+    val context = LocalContext.current
+
     var label by remember { mutableStateOf(existing?.label ?: "") }
     var repeating by remember { mutableStateOf((existing?.repeatDays ?: 0) != 0) }
     var repeatDays by remember { mutableStateOf(existing?.repeatDays ?: BlockSchedule.WEEKDAYS) }
@@ -267,13 +279,61 @@ private fun ScheduleDialog(
     var endMs   by remember { mutableStateOf(existing?.endEpochMs   ?: (now + 2 * 3600_000L)) }
 
     val dayNames = listOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
-    val fmt = remember { SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()) }
+    val dateFmt = remember { SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()) }
+    val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+
+    // ── Helper to show a real TimePickerDialog ────────────────────────────────
+    fun pickTime(currentMs: Long, onResult: (Long) -> Unit) {
+        val cal = Calendar.getInstance().apply { timeInMillis = currentMs }
+        TimePickerDialog(
+            context,
+            { _, hour, minute ->
+                val newCal = Calendar.getInstance().apply {
+                    timeInMillis = currentMs
+                    set(Calendar.HOUR_OF_DAY, hour)
+                    set(Calendar.MINUTE, minute)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }
+                onResult(newCal.timeInMillis)
+            },
+            cal.get(Calendar.HOUR_OF_DAY),
+            cal.get(Calendar.MINUTE),
+            true
+        ).show()
+    }
+
+    // ── Helper to show a real DatePickerDialog ────────────────────────────────
+    fun pickDate(currentMs: Long, onResult: (Long) -> Unit) {
+        val cal = Calendar.getInstance().apply { timeInMillis = currentMs }
+        DatePickerDialog(
+            context,
+            { _, year, month, day ->
+                val newCal = Calendar.getInstance().apply {
+                    timeInMillis = currentMs
+                    set(Calendar.YEAR, year)
+                    set(Calendar.MONTH, month)
+                    set(Calendar.DAY_OF_MONTH, day)
+                }
+                onResult(newCal.timeInMillis)
+            },
+            cal.get(Calendar.YEAR),
+            cal.get(Calendar.MONTH),
+            cal.get(Calendar.DAY_OF_MONTH)
+        ).apply {
+            datePicker.minDate = System.currentTimeMillis() - 1000
+        }.show()
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (existing == null) "Add Schedule" else "Edit Schedule") },
         text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Schedule name
                 OutlinedTextField(
                     value = label,
                     onValueChange = { label = it },
@@ -282,14 +342,19 @@ private fun ScheduleDialog(
                     singleLine = true
                 )
 
+                // Repeating toggle
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Repeating schedule", Modifier.weight(1f))
                     Switch(checked = repeating, onCheckedChange = { repeating = it })
                 }
 
                 if (repeating) {
+                    // Day-of-week chips
                     Text("Repeat days:", fontSize = 13.sp, color = Color(0xFF616161))
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
                         dayNames.forEachIndexed { i, name ->
                             val bit = 1 shl i
                             FilterChip(
@@ -299,35 +364,105 @@ private fun ScheduleDialog(
                             )
                         }
                     }
-                    Text("Start time: ${SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(startMs))}", fontSize = 13.sp)
-                    Text("End time:   ${SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(endMs))}", fontSize = 13.sp)
-                    Text("(Tap to edit times — use a TimePicker in the next iteration)", fontSize = 11.sp, color = Color(0xFFBDBDBD))
+
+                    Spacer(Modifier.height(4.dp))
+
+                    // Start time button — opens real TimePickerDialog
+                    OutlinedButton(
+                        onClick = { pickTime(startMs) { startMs = it } },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.AccessTime, null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Start: ${timeFmt.format(Date(startMs))}", fontSize = 14.sp)
+                    }
+
+                    // End time button — opens real TimePickerDialog
+                    OutlinedButton(
+                        onClick = { pickTime(endMs) { endMs = it } },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.AccessTime, null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("End:   ${timeFmt.format(Date(endMs))}", fontSize = 14.sp)
+                    }
+
                 } else {
-                    Text("Start: ${fmt.format(Date(startMs))}", fontSize = 13.sp)
-                    Text("End:   ${fmt.format(Date(endMs))}", fontSize = 13.sp)
-                    Text("(Date/time picker — tap to set)", fontSize = 11.sp, color = Color(0xFFBDBDBD))
+                    // One-shot: date + time for start
+                    Text("Start:", fontSize = 13.sp, color = Color(0xFF616161))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = { pickDate(startMs) { startMs = it } },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.CalendarToday, null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(dateFmt.format(Date(startMs)), fontSize = 13.sp)
+                        }
+                        OutlinedButton(
+                            onClick = { pickTime(startMs) { startMs = it } },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.AccessTime, null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(timeFmt.format(Date(startMs)), fontSize = 13.sp)
+                        }
+                    }
+
+                    // One-shot: date + time for end
+                    Text("End:", fontSize = 13.sp, color = Color(0xFF616161))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = { pickDate(endMs) { endMs = it } },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.CalendarToday, null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(dateFmt.format(Date(endMs)), fontSize = 13.sp)
+                        }
+                        OutlinedButton(
+                            onClick = { pickTime(endMs) { endMs = it } },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.AccessTime, null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text(timeFmt.format(Date(endMs)), fontSize = 13.sp)
+                        }
+                    }
+                }
+
+                // Validation warning
+                if (endMs <= startMs && !repeating) {
+                    Text(
+                        "⚠ End time must be after start time.",
+                        color = Color(0xFFD32F2F),
+                        fontSize = 12.sp
+                    )
                 }
             }
         },
         confirmButton = {
-            Button(onClick = {
-                val schedule = BlockSchedule(
-                    id = existing?.id ?: UUID.randomUUID().toString(),
-                    label = label.ifBlank { "Schedule" },
-                    startEpochMs = startMs,
-                    endEpochMs = endMs,
-                    repeatDays = if (repeating) repeatDays else 0,
-                    enabled = existing?.enabled ?: true
-                )
-                onSave(schedule)
-            }) { Text("Save") }
+            Button(
+                onClick = {
+                    val schedule = BlockSchedule(
+                        id = existing?.id ?: UUID.randomUUID().toString(),
+                        label = label.ifBlank { "Schedule" },
+                        startEpochMs = startMs,
+                        endEpochMs = endMs,
+                        repeatDays = if (repeating) repeatDays else 0,
+                        enabled = existing?.enabled ?: true
+                    )
+                    onSave(schedule)
+                },
+                enabled = repeating || endMs > startMs
+            ) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Blocked Apps Screen
+// Blocked Apps Screen — package loading on IO thread
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
@@ -339,19 +474,22 @@ fun BlockedAppsScreen() {
     var searchQuery by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
-        val pm = context.packageManager
-        val blocked = prefs.getBlockedPackages()
-        val installed = pm.getInstalledApplications(0)
-            .filter { pm.getLaunchIntentForPackage(it.packageName) != null }
-            .map { info ->
-                AppInfo(
-                    packageName = info.packageName,
-                    appName = pm.getApplicationLabel(info).toString(),
-                    isBlocked = info.packageName in blocked,
-                    isSystemApp = (info.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0
-                )
-            }
-            .sortedWith(compareByDescending<AppInfo> { it.isBlocked }.thenBy { it.appName })
+        // Move package enumeration off the main thread to prevent UI freeze
+        val installed = withContext(Dispatchers.IO) {
+            val pm = context.packageManager
+            val blocked = prefs.getBlockedPackages()
+            pm.getInstalledApplications(0)
+                .filter { pm.getLaunchIntentForPackage(it.packageName) != null }
+                .map { info ->
+                    AppInfo(
+                        packageName = info.packageName,
+                        appName = pm.getApplicationLabel(info).toString(),
+                        isBlocked = info.packageName in blocked,
+                        isSystemApp = (info.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0
+                    )
+                }
+                .sortedWith(compareByDescending<AppInfo> { it.isBlocked }.thenBy { it.appName })
+        }
         apps = installed
         loading = false
     }
@@ -369,14 +507,21 @@ fun BlockedAppsScreen() {
 
         if (loading) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator()
+                    Spacer(Modifier.height(8.dp))
+                    Text("Loading apps…", color = Color(0xFF9E9E9E), fontSize = 13.sp)
+                }
             }
         } else {
             val filtered = apps.filter {
                 it.appName.contains(searchQuery, ignoreCase = true) ||
                 it.packageName.contains(searchQuery, ignoreCase = true)
             }
-            LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            LazyColumn(
+                Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
                 item { Spacer(Modifier.height(4.dp)) }
                 items(filtered, key = { it.packageName }) { app ->
                     AppBlockRow(app = app, onToggle = { pkg, block ->
@@ -410,9 +555,13 @@ private fun AppBlockRow(app: AppInfo, onToggle: (String, Boolean) -> Unit) {
                 Text(app.packageName, fontSize = 11.sp, color = Color(0xFF9E9E9E))
             }
             if (app.isBlocked) {
-                Text("BLOCKED", fontSize = 10.sp, color = Color(0xFFD32F2F),
+                Text(
+                    "BLOCKED",
+                    fontSize = 10.sp,
+                    color = Color(0xFFD32F2F),
                     fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(end = 8.dp))
+                    modifier = Modifier.padding(end = 8.dp)
+                )
             }
             Switch(
                 checked = app.isBlocked,
@@ -443,7 +592,6 @@ fun SettingsScreen() {
             .verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // Master toggle
         SettingsSection(title = "Blocking") {
             SettingsToggleRow(
                 icon = Icons.Default.Shield,
@@ -455,13 +603,12 @@ fun SettingsScreen() {
             SettingsToggleRow(
                 icon = Icons.Default.Brightness3,
                 title = "Dim Screen on Block",
-                subtitle = "Lower brightness when a block triggers",
+                subtitle = "Lower screen brightness when a block triggers",
                 checked = dimOnBlock,
                 onToggle = { dimOnBlock = it; prefs.setDimOnBlock(it) }
             )
         }
 
-        // Face enrollment
         SettingsSection(title = "Face Enrollment") {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -484,9 +631,9 @@ fun SettingsScreen() {
                         )
                         Text(
                             if (faceEnrolled)
-                                "The child's face is registered. Parent can override by verifying identity on the block screen."
+                                "Child's face registered. Parent can face-unlock the block screen."
                             else
-                                "Enroll the child's face to enable identity-based blocking.",
+                                "Enroll child's face to enable identity-based blocking.",
                             fontSize = 12.sp,
                             color = Color(0xFF757575)
                         )
@@ -508,7 +655,6 @@ fun SettingsScreen() {
             }
         }
 
-        // Permissions quick-links
         SettingsSection(title = "Permissions") {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -534,7 +680,6 @@ fun SettingsScreen() {
             }
         }
 
-        // About
         SettingsSection(title = "About") {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -548,7 +693,7 @@ fun SettingsScreen() {
                     Text("Package: com.parental.focus", color = Color(0xFF9E9E9E), fontSize = 12.sp)
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "Uses Accessibility Services to detect and block restricted apps during scheduled sessions.",
+                        "Uses Accessibility Services to block restricted apps during scheduled sessions. Face enrollment enables parent identity verification on the block screen.",
                         fontSize = 12.sp,
                         color = Color(0xFF757575)
                     )
