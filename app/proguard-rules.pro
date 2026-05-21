@@ -1,0 +1,3 @@
+-keep class com.parental.focus.** { *; }
+-keep class com.google.mlkit.** { *; }
+-keepattributes *Annotation*
