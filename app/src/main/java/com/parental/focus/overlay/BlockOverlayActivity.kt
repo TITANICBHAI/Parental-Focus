@@ -16,7 +16,6 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
-import com.google.mlkit.vision.common.InputImage
 import com.parental.focus.R
 import com.parental.focus.data.AppPreferences
 import com.parental.focus.face.FaceUtils
@@ -332,8 +331,8 @@ class BlockOverlayActivity : Activity(), LifecycleOwner {
                         override fun onCaptureSuccess(image: ImageProxy) {
                             val bitmap = image.toBitmap()
                             image.close()
-                            val reference = prefs.getFaceLandmarks()
-                            FaceUtils.verifyFace(bitmap, reference) { match ->
+                            val reference = prefs.getFaceEmbedding()
+                            FaceUtils.verifyFace(bitmap, reference, applicationContext) { match ->
                                 handler.post { handleVerificationResult(match) }
                             }
                         }
