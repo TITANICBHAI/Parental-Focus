@@ -1,0 +1,64 @@
+<resources>
+    <string name="app_name">Parental Focus</string>
+    <string name="accessibility_service_label">Parental Focus – App Blocker</string>
+    <string name="accessibility_service_description">Parental Focus uses Accessibility Services to detect when a restricted app is opened and automatically redirect to the home screen, enforcing scheduled app restrictions for your child.</string>
+
+    <!-- Permissions screen -->
+    <string name="perm_title">Set Up Parental Focus</string>
+    <string name="perm_subtitle">Grant the following permissions to enable all protection features</string>
+    <string name="perm_accessibility_title">Accessibility Service</string>
+    <string name="perm_accessibility_desc">Detects when a restricted app opens and sends the user back to the home screen instantly.</string>
+    <string name="perm_camera_title">Camera</string>
+    <string name="perm_camera_desc">Used to capture and enroll your child\'s face for identity-based blocking.</string>
+    <string name="perm_usage_title">Usage Access</string>
+    <string name="perm_usage_desc">Allows monitoring which app is in the foreground as a fallback detection method.</string>
+    <string name="perm_overlay_title">Display Over Other Apps</string>
+    <string name="perm_overlay_desc">Enables the blocking screen to appear on top of restricted apps.</string>
+    <string name="perm_brightness_title">Write System Settings</string>
+    <string name="perm_brightness_desc">Allows Parental Focus to auto-dim the screen during focus sessions.</string>
+    <string name="perm_notification_title">Notifications</string>
+    <string name="perm_notification_desc">Shows a persistent notification while protection is active.</string>
+    <string name="perm_battery_title">Battery Optimization</string>
+    <string name="perm_battery_desc">Prevents Android from killing the background service that enforces blocking.</string>
+    <string name="btn_grant">Grant</string>
+    <string name="btn_granted">Granted ✓</string>
+    <string name="btn_continue">Continue to Setup</string>
+
+    <!-- Face enrollment -->
+    <string name="face_enroll_title">Enroll Child\'s Face</string>
+    <string name="face_enroll_subtitle">Look straight at the camera. The app will capture your child\'s face to identify them during blocking sessions.</string>
+    <string name="face_enroll_btn">Capture Face</string>
+    <string name="face_enroll_success">Face enrolled successfully!</string>
+    <string name="face_enroll_fail">No face detected. Please try again.</string>
+    <string name="face_enroll_tip">Make sure the face is well-lit and centred in the frame.</string>
+
+    <!-- Main screen -->
+    <string name="tab_schedule">Schedules</string>
+    <string name="tab_apps">Blocked Apps</string>
+    <string name="tab_settings">Settings</string>
+    <string name="add_schedule">Add Schedule</string>
+    <string name="no_schedules">No schedules yet.\nTap + to add one.</string>
+    <string name="no_apps_blocked">No apps blocked yet.\nSelect apps to restrict.</string>
+    <string name="schedule_active">Active</string>
+    <string name="schedule_inactive">Inactive</string>
+    <string name="delete">Delete</string>
+    <string name="edit">Edit</string>
+    <string name="save">Save</string>
+    <string name="cancel">Cancel</string>
+
+    <!-- Block overlay -->
+    <string name="overlay_title">Focus Time</string>
+    <string name="overlay_message">This app is restricted during your scheduled focus session.</string>
+    <string name="overlay_tip">Stay focused. You can do this.</string>
+    <string name="overlay_unlock_hint">Parent unlock: scan face to override</string>
+    <string name="overlay_verify_face">Verify Parent Face</string>
+    <string name="overlay_verified">Identity verified — access granted.</string>
+    <string name="overlay_not_verified">Face not recognised. Access denied.</string>
+
+    <!-- Foreground service notification -->
+    <string name="notif_channel_name">Parental Focus – Active Protection</string>
+    <string name="notif_channel_desc">Persistent notification while app blocking is active.</string>
+    <string name="notif_title">Parental Focus is active</string>
+    <string name="notif_text">App restrictions are enforced.</string>
+    <string name="notif_title_blocking">Blocking active</string>
+</resources>
