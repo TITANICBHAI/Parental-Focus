@@ -28,22 +28,11 @@
     <!-- ══════════════════════════════════════════════════
          SPECIAL PERMISSIONS (Settings → Special app access)
     ══════════════════════════════════════════════════ -->
-
-    <!-- Accessibility Service – required for foreground app detection & HOME action -->
-    <!-- Granted in: Settings → Accessibility → Parental Focus -->
-
-    <!-- Usage Stats – query which app is in foreground on older APIs -->
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
-
-    <!-- Draw Over Other Apps – BlockOverlayActivity needs this on some devices -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
-
-    <!-- Query all installed packages (needed to list apps to block) -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
-
-    <!-- Brightness write (auto-dim when focus mode active) -->
     <uses-permission android:name="android.permission.WRITE_SETTINGS"
         tools:ignore="ProtectedPermissions" />
 
@@ -76,18 +65,18 @@
             </intent-filter>
         </activity>
 
+        <!-- ── Permissions Setup Activity ── -->
+        <activity
+            android:name=".ui.PermissionsActivity"
+            android:exported="false" />
+
         <!-- ── Face Enrollment Activity ── -->
         <activity
             android:name=".ui.FaceEnrollmentActivity"
             android:exported="false"
             android:screenOrientation="portrait" />
 
-        <!-- ── Block Overlay Activity ──
-             Full-screen overlay shown when a blocked app is detected.
-             • excludeFromRecents — never appears in app switcher
-             • showWhenLocked / turnScreenOn — works over lock screen
-             • noHistory — removed from back stack on finish
-             • singleTask — prevents duplicate stacking -->
+        <!-- ── Block Overlay Activity ── -->
         <activity
             android:name=".overlay.BlockOverlayActivity"
             android:exported="false"
@@ -98,8 +87,7 @@
             android:launchMode="singleTask"
             android:theme="@style/Theme.ParentalFocus.Fullscreen" />
 
-        <!-- ── Blocker Foreground Service ──
-             Stays alive to keep AccessibilityService process running. -->
+        <!-- ── Blocker Foreground Service ── -->
         <service
             android:name=".service.BlockerForegroundService"
             android:exported="false"
@@ -109,8 +97,7 @@
                 android:value="parental_control" />
         </service>
 
-        <!-- ── Accessibility Service ──
-             Core blocking engine. Intercepts window events and fires HOME. -->
+        <!-- ── Accessibility Service ── -->
         <service
             android:name=".service.AppBlockerAccessibilityService"
             android:exported="true"
